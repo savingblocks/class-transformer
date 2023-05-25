@@ -142,6 +142,17 @@ export class TransformOperationExecutor {
         }
       if (!targetType && source) targetType = source.constructor;
 
+      let targetClass = (targetType as TypeMetadata)?.target || (targetType as Function);
+
+      // further resolve any @Type() decorator on the target type
+      if (targetType) {
+        const metadata = defaultMetadataStorage.findTypeMetadata(targetClass, undefined);
+        if (metadata && typeof metadata.typeFunction === 'function') {
+          const options: TypeHelpOptions = { newObject: undefined, object: value, property: undefined };
+          targetClass = targetType = metadata.typeFunction(options);
+        }
+      }
+
       if (this.options.enableCircularCheck) {
         // add transformed type to prevent circular references
         this.recursionStack.add(value);
@@ -150,16 +161,24 @@ export class TransformOperationExecutor {
       const keys = this.getKeys(targetType as Function, value, isMap);
       let newValue: any = source ? source : {};
       if (
-        !source &&
-        (this.transformationType === TransformationType.PLAIN_TO_CLASS ||
-          this.transformationType === TransformationType.CLASS_TO_CLASS)
+        this.transformationType === TransformationType.PLAIN_TO_CLASS ||
+        this.transformationType === TransformationType.CLASS_TO_CLASS
       ) {
-        if (isMap) {
-          newValue = new Map();
+        if (!source) {
+          if (isMap) {
+            newValue = new Map();
+          } else if (targetType) {
+            newValue = new (targetType as any)();
+          } else {
+            newValue = {};
+          }
         } else if (targetType) {
-          newValue = new (targetType as any)();
-        } else {
-          newValue = {};
+          // ie. only plainToClassFromExist or classToClassFromExist
+          // Ensure that provided existing object is of the expected type
+          const valueProto = Object.getPrototypeOf(newValue);
+          if (valueProto !== targetClass.prototype) {
+            Object.setPrototypeOf(newValue, targetClass.prototype);
+          }
         }
       }
 

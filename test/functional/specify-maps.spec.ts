@@ -600,6 +600,168 @@ describe('specifying target maps', () => {
     });
   });
 
+  it('should convert type to specific types via target class @Type decorator', () => {
+    defaultMetadataStorage.clear();
+
+    @Type(type => {
+      const isEmployee = type.object && (type.object as Person).discriminator === 'employee';
+      return isEmployee ? Employee : Person;
+    })
+    class Person {
+      id: number;
+
+      discriminator: 'person' | 'employee';
+
+      age: number;
+
+      firstName: string;
+
+      lastName: string;
+    }
+
+    class Employee extends Person {
+      employeeNo: string;
+    }
+
+    const person = new Person();
+    person.discriminator = 'person';
+    person.firstName = 'Joe';
+    person.lastName = 'Bloggs';
+
+    const employee = new Employee();
+    employee.discriminator = 'employee';
+    employee.firstName = 'Fred';
+    employee.lastName = 'Nerk';
+    employee.employeeNo = '456';
+
+    const fromPlainPerson = {
+      discriminator: 'person',
+      firstName: 'Joe',
+      lastName: 'Bloggs',
+    };
+
+    const fromPlainEmployee = {
+      discriminator: 'employee',
+      firstName: 'Fred',
+      lastName: 'Nerk',
+      employeeNo: '456',
+    };
+
+    const createFromExistPerson = (extraData = {}) => {
+      const fromExistPerson = new Person();
+      fromExistPerson.id = 1;
+      return Object.assign(fromExistPerson, extraData);
+    };
+
+    const plainPerson: any = instanceToPlain(person, { strategy: 'exposeAll' });
+    expect(plainPerson).not.toBeInstanceOf(Person);
+    expect(plainPerson).toEqual({
+      discriminator: 'person',
+      firstName: 'Joe',
+      lastName: 'Bloggs',
+    });
+
+    const plainEmployee: any = instanceToPlain(employee, { strategy: 'exposeAll' });
+    expect(plainEmployee).not.toBeInstanceOf(Employee);
+    expect(plainEmployee).toEqual({
+      discriminator: 'employee',
+      firstName: 'Fred',
+      lastName: 'Nerk',
+      employeeNo: '456',
+    });
+
+    const existEmployee = { id: 1, age: 27 };
+    const plainEmployee2 = classToPlainFromExist(employee, existEmployee, { strategy: 'exposeAll' });
+    expect(plainEmployee2).not.toBeInstanceOf(Employee);
+    expect(plainEmployee2).toEqual(existEmployee);
+    expect(plainEmployee2).toEqual({
+      discriminator: 'employee',
+      id: 1,
+      age: 27,
+      firstName: 'Fred',
+      lastName: 'Nerk',
+      employeeNo: '456',
+    });
+
+    const transformedPerson = plainToInstance(Person, fromPlainEmployee, { strategy: 'exposeAll' });
+    expect(transformedPerson).toBeInstanceOf(Employee);
+
+    let fromExistPerson = createFromExistPerson();
+
+    const fromExistTransformedPerson = plainToClassFromExist(fromExistPerson, fromPlainPerson, {
+      strategy: 'exposeAll',
+    });
+    expect(fromExistTransformedPerson).toBeInstanceOf(Person);
+    expect(fromExistTransformedPerson).toEqual({
+      discriminator: 'person',
+      id: 1,
+      firstName: 'Joe',
+      lastName: 'Bloggs',
+    });
+
+    // plainToClassFromExist with employee
+    const fromExistTransformedEmployee = plainToClassFromExist(fromExistPerson, fromPlainEmployee, {
+      strategy: 'exposeAll',
+    });
+    expect(fromExistTransformedEmployee).toBeInstanceOf(Employee);
+    expect(fromExistTransformedEmployee).toEqual({
+      discriminator: 'employee',
+      id: 1,
+      firstName: 'Fred',
+      lastName: 'Nerk',
+      employeeNo: '456',
+    });
+
+    const classToClassPerson = instanceToInstance(person, { strategy: 'exposeAll' });
+    expect(classToClassPerson).toBeInstanceOf(Person);
+    expect(classToClassPerson).toEqual(person);
+    expect(classToClassPerson).toEqual({
+      discriminator: 'person',
+      firstName: 'Joe',
+      lastName: 'Bloggs',
+    });
+
+    // Should allow @Type to override the target type when performing CLASS_TO_CLASS
+    const employeePerson = Object.assign(new Person(), person, { discriminator: 'employee' });
+
+    const classToClassEmployeePerson = instanceToInstance(employeePerson, { strategy: 'exposeAll' });
+    expect(classToClassEmployeePerson).toBeInstanceOf(Employee);
+    expect(classToClassEmployeePerson).toEqual(employeePerson);
+    expect(classToClassEmployeePerson).toEqual({
+      discriminator: 'employee',
+      firstName: 'Joe',
+      lastName: 'Bloggs',
+    });
+
+    const classToClassEmployee = instanceToInstance(employee, { strategy: 'exposeAll' });
+    expect(classToClassEmployee).toBeInstanceOf(Employee);
+    expect(classToClassEmployee).toEqual(employee);
+    expect(classToClassEmployee).toEqual({
+      discriminator: 'employee',
+      firstName: 'Fred',
+      lastName: 'Nerk',
+      employeeNo: '456',
+    });
+
+    // Ensure classToClassFromExist converts type
+    const fromExistEmployeePerson = new Person();
+    (fromExistEmployeePerson.id = 1), (fromExistEmployeePerson.discriminator = 'employee');
+
+    const classToClassFromExistEmployee = classToClassFromExist(employee, fromExistEmployeePerson, {
+      strategy: 'exposeAll',
+    });
+    expect(classToClassFromExistEmployee).toBeInstanceOf(Employee);
+    expect(classToClassFromExistEmployee).not.toEqual(employee);
+    expect(classToClassFromExistEmployee).toEqual(fromExistEmployeePerson);
+    expect(classToClassFromExistEmployee).toEqual({
+      discriminator: 'employee',
+      id: 1,
+      firstName: 'Fred',
+      lastName: 'Nerk',
+      employeeNo: '456',
+    });
+  });
+
   it('should transform nested objects too and make sure their decorators are used too', () => {
     defaultMetadataStorage.clear();
 
@@ -730,6 +892,85 @@ describe('specifying target maps', () => {
     });
     expect(plainUser.password).toBeUndefined();
     expect(plainUser.photo.name).toBeUndefined();
+  });
+
+  it('should transform array items to correct polymorphic type for classes with class-level @Type decorator', () => {
+    defaultMetadataStorage.clear();
+
+    const getPhotoType = (value: any) => {
+      const discriminator = value.discriminator;
+      let resolvedType =
+        discriminator === 'landscape' ? LandscapePhoto : discriminator === 'portrait' ? PortraitPhoto : undefined;
+      if (resolvedType === undefined) {
+        throw new Error(`Unknown photo discriminator value ${discriminator}`);
+      }
+      return resolvedType;
+    };
+
+    @Type(opts => getPhotoType(opts.object))
+    class Photo {
+      discriminator: 'landscape' | 'portrait';
+
+      id: number;
+
+      name: string;
+
+      @Exclude()
+      filename: string;
+    }
+
+    class LandscapePhoto extends Photo {
+      location: string;
+    }
+
+    class Person {
+      id: string;
+      name: string;
+    }
+    class PortraitPhoto extends Photo {
+      @Type(() => Person)
+      person: Person;
+    }
+
+    class Album {
+      id: number;
+
+      name: string;
+
+      @Type(() => Photo)
+      photos: Photo[];
+    }
+
+    const plainAlbum = {
+      id: 1,
+      name: 'Album',
+      photos: [
+        { discriminator: 'landscape', id: 1, name: 'Landscape 1', filename: 'landscape1.jpg', location: 'Somewhere' },
+        {
+          discriminator: 'portrait',
+          id: 2,
+          name: 'Portrait 1',
+          filename: 'portrait1.jpg',
+          person: { id: 1, name: 'Someone' },
+        },
+      ],
+    };
+
+    const album = plainToInstance(Album, plainAlbum);
+    expect(album).toBeInstanceOf(Album);
+    expect(album).not.toEqual(plainAlbum);
+    expect(album).toEqual({
+      id: 1,
+      name: 'Album',
+      photos: [
+        { discriminator: 'landscape', id: 1, name: 'Landscape 1', location: 'Somewhere' },
+        { discriminator: 'portrait', id: 2, name: 'Portrait 1', person: { id: 1, name: 'Someone' } },
+      ],
+    });
+    expect(album.photos[0]).toBeInstanceOf(LandscapePhoto);
+    expect(album.photos[1]).toBeInstanceOf(PortraitPhoto);
+    const portrait = album.photos[1] as PortraitPhoto;
+    expect(portrait.person).toBeInstanceOf(Person);
   });
 
   it('should convert given plain object to class instance object', () => {
